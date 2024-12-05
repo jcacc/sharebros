@@ -22,11 +22,16 @@ initial_extensions = [
     'cogs.greetings',
     'cogs.roll',
     'cogs.echo',
+    'cogs.vampire',
 ]
 
 if __name__ == '__main__':
     for extension in initial_extensions:
-        bot.load_extension(extension)
+        try:
+            bot.load_extension(extension)
+            print(f'[BOT] Cog loaded successfully: {extension}')
+        except Exception as e:
+            print(f'[BOT] Cog "{extension}" failed to load. Error: {e}')
 
 # Run the bot with the specified token
 bot.run(TOKEN)
