@@ -23,6 +23,7 @@ initial_extensions = [
     'cogs.roll',
     'cogs.echo',
     'cogs.vampire',
+    'cogs.crazy',
 ]
 
 if __name__ == '__main__':
