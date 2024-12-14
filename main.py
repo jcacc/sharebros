@@ -24,6 +24,8 @@ initial_extensions = [
     'cogs.echo',
     'cogs.vampire',
     'cogs.crazy',
+    'cogs.itysl',
+    'cogs.bible',
 ]
 
 if __name__ == '__main__':
