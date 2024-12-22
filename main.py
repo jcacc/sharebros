@@ -26,6 +26,7 @@ initial_extensions = [
     'cogs.crazy',
     'cogs.itysl',
     'cogs.bible',
+    'cogs.google',
 ]
 
 if __name__ == '__main__':
