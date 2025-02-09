@@ -18,6 +18,7 @@ class CrazyEmoji(commands.Cog):
         if "crazy" in message.content.lower():
             responses = [
                 "Purple monkey dishwasher!",
+                "Your going to jail. You are too crazy."
                 "Flying spaghetti monster!",
                 "You're totally out of your mind!",
                 "That's just wild!",

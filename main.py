@@ -27,6 +27,9 @@ initial_extensions = [
     'cogs.itysl',
     'cogs.bible',
     'cogs.google',
+    'cogs.trump',
+    'cogs.detroiters',
+    'cogs.deadwood',
 ]
 
 if __name__ == '__main__':
