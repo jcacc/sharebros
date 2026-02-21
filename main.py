@@ -18,6 +18,7 @@ initial_extensions = [
     'cogs.trump',
     'cogs.detroiters',
     'cogs.deadwood',
+    'cogs.fixembed',
 ]
 
 intents = discord.Intents.default()
