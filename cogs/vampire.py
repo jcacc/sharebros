@@ -31,5 +31,5 @@ class Vampire(commands.Cog):
             await ctx.send('The quotes file could not be found. Make sure "vampire_flow.txt" is in the correct directory.')
 
 # Required function to add this cog to the bot (Synchronous Version)
-def setup(bot):
-    bot.add_cog(Vampire(bot))
+async def setup(bot):
+    await bot.add_cog(Vampire(bot))

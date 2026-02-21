@@ -47,5 +47,5 @@ class Google(commands.Cog):
             if 'pinimg' not in result['link']:
                 return result['link']
 
-def setup(bot):
-    bot.add_cog(Google(bot))
+async def setup(bot):
+    await bot.add_cog(Google(bot))

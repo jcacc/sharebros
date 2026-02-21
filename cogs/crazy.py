@@ -32,5 +32,5 @@ class CrazyEmoji(commands.Cog):
             await message.channel.send(response)
 
 # Required function to add this cog to the bot (Synchronous Version)
-def setup(bot):
-    bot.add_cog(CrazyEmoji(bot))
+async def setup(bot):
+    await bot.add_cog(CrazyEmoji(bot))

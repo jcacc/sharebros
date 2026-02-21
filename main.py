@@ -4,20 +4,8 @@ import discord
 from discord.ext import commands
 import os
 
-# Get the bot's token from the system environment variables
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 
-# Set up the bot with a command prefix, e.g., '!'
-intents = discord.Intents.default()
-intents.messages = True
-bot = commands.Bot(command_prefix='!', intents=intents)
-
-# Event handler for when the bot is ready
-@bot.event
-async def on_ready():
-    print(f'{bot.user.name} has connected to Discord!')
-
-# Load cogs
 initial_extensions = [
     'cogs.greetings',
     'cogs.roll',
@@ -32,13 +20,23 @@ initial_extensions = [
     'cogs.deadwood',
 ]
 
-if __name__ == '__main__':
-    for extension in initial_extensions:
-        try:
-            bot.load_extension(extension)
-            print(f'[BOT] Cog loaded successfully: {extension}')
-        except Exception as e:
-            print(f'[BOT] Cog "{extension}" failed to load. Error: {e}')
+intents = discord.Intents.default()
+intents.messages = True
+intents.message_content = True
 
-# Run the bot with the specified token
+class ShareBro(commands.Bot):
+    async def setup_hook(self):
+        for extension in initial_extensions:
+            try:
+                await self.load_extension(extension)
+                print(f'[BOT] Cog loaded successfully: {extension}')
+            except Exception as e:
+                print(f'[BOT] Cog "{extension}" failed to load. Error: {e}')
+
+bot = ShareBro(command_prefix='!', intents=intents)
+
+@bot.event
+async def on_ready():
+    print(f'{bot.user.name} has connected to Discord!')
+
 bot.run(TOKEN)

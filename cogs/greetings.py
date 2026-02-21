@@ -11,5 +11,5 @@ class Greetings(commands.Cog):
     async def hello(self, ctx):
         await ctx.send(f'Hello, {ctx.author.name}! How can I assist you today?')
 
-def setup(bot):
-    bot.add_cog(Greetings(bot))
+async def setup(bot):
+    await bot.add_cog(Greetings(bot))

@@ -15,5 +15,5 @@ class Roll(commands.Cog):
         else:
             await ctx.send('Please provide a valid number of sides greater than 1.')
 
-def setup(bot):
-    bot.add_cog(Roll(bot))
+async def setup(bot):
+    await bot.add_cog(Roll(bot))

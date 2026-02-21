@@ -27,5 +27,5 @@ class Echo(commands.Cog):
             await channel.send(f'{message.content}')
 
 # Required function to add this cog to the bot (Synchronous Version)
-def setup(bot):
-    bot.add_cog(Echo(bot))
+async def setup(bot):
+    await bot.add_cog(Echo(bot))
