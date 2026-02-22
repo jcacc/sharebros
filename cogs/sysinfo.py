@@ -5,7 +5,7 @@ import datetime
 
 
 class SysInfo(commands.Cog):
-    @commands.command(aliases=['top'])
+    @commands.hybrid_command(aliases=['top'])
     async def sysinfo(self, ctx):
         """Show a snapshot of system resource usage."""
         cpu = psutil.cpu_percent(interval=1)

@@ -2,6 +2,8 @@ import asyncio
 import sqlite3
 import discord
 from discord.ext import commands
+from discord import app_commands
+from typing import Optional, Literal
 import aiohttp
 import json
 import os
@@ -20,6 +22,8 @@ PERIODS = {
     'all':    'overall'
 }
 
+Period = Literal['week', 'month', '3month', '6month', 'year', 'all']
+
 
 def load_config(config_file='/home/jca/dev/python/sharebro/config.yaml'):
     with open(config_file) as f:
@@ -34,7 +38,6 @@ def _init_db(db_path):
         '(discord_id TEXT PRIMARY KEY, lastfm_username TEXT NOT NULL)'
     )
     con.commit()
-    # Migrate from JSON
     if os.path.exists(USERS_FILE):
         try:
             with open(USERS_FILE) as f:
@@ -80,17 +83,12 @@ class FM(commands.Cog):
         con.close()
 
     def _all_users(self):
-        """Return list of (discord_id, lastfm_username) for all registered users."""
         con = sqlite3.connect(DB_PATH)
         rows = con.execute('SELECT discord_id, lastfm_username FROM users').fetchall()
         con.close()
         return rows
 
     async def _guild_registered(self, guild):
-        """
-        Return list of (Member, lastfm_username) for all registered users in a guild.
-        Uses cache first, falls back to fetch_member() for uncached members.
-        """
         result = []
         for uid, lfm in self._all_users():
             member = guild.get_member(int(uid))
@@ -112,7 +110,6 @@ class FM(commands.Cog):
             return await resp.json()
 
     async def _current_track(self, session, lfm):
-        """Return the most recent track dict or None."""
         data = await self._api(session, {
             'method': 'user.getrecenttracks',
             'user': lfm,
@@ -123,35 +120,27 @@ class FM(commands.Cog):
             return None
         return tracks[0] if isinstance(tracks, list) else tracks
 
-    async def _resolve_member_period(self, ctx, first, second):
-        """Parse optional member + period from string args."""
-        member = None
-        period_key = 'week'
-        if first:
-            try:
-                member = await commands.MemberConverter().convert(ctx, first)
-                if second:
-                    period_key = second.lower()
-            except commands.BadArgument:
-                period_key = first.lower()
-        return member, period_key
+    def _no_lfm_msg(self):
+        return 'No Last.fm username set. Use `!setfm <username>`.'
 
     # ------------------------------------------------------------------ #
     #  Commands: registration + now playing                                #
     # ------------------------------------------------------------------ #
-    @commands.command()
+    @commands.hybrid_command()
+    @app_commands.describe(username='Your Last.fm username')
     async def setfm(self, ctx, username: str):
         """Set your Last.fm username."""
         self._set_lfm(ctx.author.id, username)
         await ctx.send(f'Last.fm username set to `{username}`.')
 
-    @commands.command()
-    async def fm(self, ctx, member: discord.Member = None):
+    @commands.hybrid_command()
+    @app_commands.describe(member='User to look up (default: you)')
+    async def fm(self, ctx, member: Optional[discord.Member] = None):
         """Show now playing / last played track."""
         user = member or ctx.author
         lfm = self._get_lfm(user)
         if not lfm:
-            await ctx.send('No Last.fm username set. Use `!setfm <username>`.')
+            await ctx.send(self._no_lfm_msg())
             return
 
         async with aiohttp.ClientSession() as session:
@@ -174,20 +163,19 @@ class FM(commands.Cog):
             description=f'by **{artist}**' + (f' on *{album}*' if album else ''),
             color=0xD51007
         )
-        embed.set_author(
-            name=f'{"🎵 Now playing" if now_playing else "⏮ Last played"} — {lfm}'
-        )
+        embed.set_author(name=f'{"🎵 Now playing" if now_playing else "⏮ Last played"} — {lfm}')
         if image:
             embed.set_thumbnail(url=image)
         await ctx.send(embed=embed)
 
-    @commands.command()
-    async def recent(self, ctx, member: discord.Member = None):
+    @commands.hybrid_command()
+    @app_commands.describe(member='User to look up (default: you)')
+    async def recent(self, ctx, member: Optional[discord.Member] = None):
         """Show 5 most recent tracks."""
         user = member or ctx.author
         lfm = self._get_lfm(user)
         if not lfm:
-            await ctx.send('No Last.fm username set. Use `!setfm <username>`.')
+            await ctx.send(self._no_lfm_msg())
             return
 
         async with aiohttp.ClientSession() as session:
@@ -217,45 +205,47 @@ class FM(commands.Cog):
     # ------------------------------------------------------------------ #
     #  Commands: plays / top lists                                         #
     # ------------------------------------------------------------------ #
-    @commands.command(aliases=['p'])
-    async def plays(self, ctx, member_or_period: str = None, period_arg: str = None):
-        """Total scrobble count for a period (default: week)."""
-        member, period_key = await self._resolve_member_period(ctx, member_or_period, period_arg)
+    @commands.hybrid_command(aliases=['p'])
+    @app_commands.describe(member='User to look up (default: you)', period='Time period')
+    async def plays(self, ctx, member: Optional[discord.Member] = None, period: Period = 'week'):
+        """Total scrobble count for a period."""
         user = member or ctx.author
         lfm = self._get_lfm(user)
         if not lfm:
-            await ctx.send('No Last.fm username set. Use `!setfm <username>`.')
+            await ctx.send(self._no_lfm_msg())
             return
 
-        period = PERIODS.get(period_key, '7day')
+        lfm_period = PERIODS.get(period, '7day')
         async with aiohttp.ClientSession() as session:
             data = await self._api(session, {
                 'method': 'user.getrecenttracks',
                 'user': lfm,
-                'period': period,
+                'period': lfm_period,
                 'limit': 1
             })
 
         total = data.get('recenttracks', {}).get('@attr', {}).get('total', '?')
-        period_label = next((k for k, v in PERIODS.items() if v == period), period_key)
-        await ctx.send(f'**{lfm}** has **{int(total):,}** scrobbles this {period_label}.' if str(total).isdigit() else f'**{lfm}**: {total} scrobbles ({period_label})')
+        await ctx.send(
+            f'**{lfm}** has **{int(total):,}** scrobbles this {period}.'
+            if str(total).isdigit() else f'**{lfm}**: {total} scrobbles ({period})'
+        )
 
-    @commands.command(aliases=['tt'])
-    async def toptracks(self, ctx, member_or_period: str = None, period_arg: str = None):
-        """Top 10 tracks for a period (default: week)."""
-        member, period_key = await self._resolve_member_period(ctx, member_or_period, period_arg)
+    @commands.hybrid_command(aliases=['tt'])
+    @app_commands.describe(member='User to look up (default: you)', period='Time period')
+    async def toptracks(self, ctx, member: Optional[discord.Member] = None, period: Period = 'week'):
+        """Top 10 tracks for a period."""
         user = member or ctx.author
         lfm = self._get_lfm(user)
         if not lfm:
-            await ctx.send('No Last.fm username set. Use `!setfm <username>`.')
+            await ctx.send(self._no_lfm_msg())
             return
 
-        period = PERIODS.get(period_key, '7day')
+        lfm_period = PERIODS.get(period, '7day')
         async with aiohttp.ClientSession() as session:
             data = await self._api(session, {
                 'method': 'user.gettoptracks',
                 'user': lfm,
-                'period': period,
+                'period': lfm_period,
                 'limit': 10
             })
 
@@ -268,30 +258,29 @@ class FM(commands.Cog):
             f'`{i+1}.` **{t["name"]}** — {t["artist"]["name"]} ({int(t["playcount"]):,} plays)'
             for i, t in enumerate(tracks)
         ]
-        period_label = next((k for k, v in PERIODS.items() if v == period), period_key)
         embed = discord.Embed(
-            title=f'Top tracks ({period_label}) — {lfm}',
+            title=f'Top tracks ({period}) — {lfm}',
             description='\n'.join(lines),
             color=0xD51007
         )
         await ctx.send(embed=embed)
 
-    @commands.command(aliases=['tab'])
-    async def topalbums(self, ctx, member_or_period: str = None, period_arg: str = None):
-        """Top 10 albums for a period (default: week)."""
-        member, period_key = await self._resolve_member_period(ctx, member_or_period, period_arg)
+    @commands.hybrid_command(aliases=['tab'])
+    @app_commands.describe(member='User to look up (default: you)', period='Time period')
+    async def topalbums(self, ctx, member: Optional[discord.Member] = None, period: Period = 'week'):
+        """Top 10 albums for a period."""
         user = member or ctx.author
         lfm = self._get_lfm(user)
         if not lfm:
-            await ctx.send('No Last.fm username set. Use `!setfm <username>`.')
+            await ctx.send(self._no_lfm_msg())
             return
 
-        period = PERIODS.get(period_key, '7day')
+        lfm_period = PERIODS.get(period, '7day')
         async with aiohttp.ClientSession() as session:
             data = await self._api(session, {
                 'method': 'user.gettopalbums',
                 'user': lfm,
-                'period': period,
+                'period': lfm_period,
                 'limit': 10
             })
 
@@ -304,30 +293,29 @@ class FM(commands.Cog):
             f'`{i+1}.` **{a["name"]}** — {a["artist"]["name"]} ({int(a["playcount"]):,} plays)'
             for i, a in enumerate(albums)
         ]
-        period_label = next((k for k, v in PERIODS.items() if v == period), period_key)
         embed = discord.Embed(
-            title=f'Top albums ({period_label}) — {lfm}',
+            title=f'Top albums ({period}) — {lfm}',
             description='\n'.join(lines),
             color=0xD51007
         )
         await ctx.send(embed=embed)
 
-    @commands.command(aliases=['ta'])
-    async def topartists(self, ctx, member_or_period: str = None, period_arg: str = None):
-        """Top 10 artists for a period (default: week)."""
-        member, period_key = await self._resolve_member_period(ctx, member_or_period, period_arg)
+    @commands.hybrid_command(aliases=['ta'])
+    @app_commands.describe(member='User to look up (default: you)', period='Time period')
+    async def topartists(self, ctx, member: Optional[discord.Member] = None, period: Period = 'week'):
+        """Top 10 artists for a period."""
         user = member or ctx.author
         lfm = self._get_lfm(user)
         if not lfm:
-            await ctx.send('No Last.fm username set. Use `!setfm <username>`.')
+            await ctx.send(self._no_lfm_msg())
             return
 
-        period = PERIODS.get(period_key, '7day')
+        lfm_period = PERIODS.get(period, '7day')
         async with aiohttp.ClientSession() as session:
             data = await self._api(session, {
                 'method': 'user.gettopartists',
                 'user': lfm,
-                'period': period,
+                'period': lfm_period,
                 'limit': 10
             })
 
@@ -340,9 +328,8 @@ class FM(commands.Cog):
             f'`{i+1}.` **{a["name"]}** — {int(a["playcount"]):,} plays'
             for i, a in enumerate(artists)
         ]
-        period_label = next((k for k, v in PERIODS.items() if v == period), period_key)
         embed = discord.Embed(
-            title=f'Top artists ({period_label}) — {lfm}',
+            title=f'Top artists ({period}) — {lfm}',
             description='\n'.join(lines),
             color=0xD51007
         )
@@ -351,12 +338,13 @@ class FM(commands.Cog):
     # ------------------------------------------------------------------ #
     #  Commands: track / album / artist info                               #
     # ------------------------------------------------------------------ #
-    @commands.command(aliases=['tr'])
+    @commands.hybrid_command(aliases=['tr'])
+    @app_commands.describe(query='Artist - Track (leave blank for current track)')
     async def track(self, ctx, *, query: str = None):
         """Info + your play count for current or named track (Artist - Track)."""
         lfm = self._get_lfm(ctx.author)
         if not lfm:
-            await ctx.send('No Last.fm username set. Use `!setfm <username>`.')
+            await ctx.send(self._no_lfm_msg())
             return
 
         async with aiohttp.ClientSession() as session:
@@ -389,14 +377,14 @@ class FM(commands.Cog):
             await ctx.send(f'Track not found: {track_name}')
             return
 
-        name        = ti.get('name', track_name)
-        artist      = ti.get('artist', {}).get('name', artist_name)
-        url         = ti.get('url', '')
-        listeners   = int(ti.get('listeners', 0))
-        scrobbles   = int(ti.get('playcount', 0))
-        user_plays  = int(ti.get('userplaycount', 0))
-        album_name  = ti.get('album', {}).get('title', '') if ti.get('album') else ''
-        image       = None
+        name       = ti.get('name', track_name)
+        artist     = ti.get('artist', {}).get('name', artist_name)
+        url        = ti.get('url', '')
+        listeners  = int(ti.get('listeners', 0))
+        scrobbles  = int(ti.get('playcount', 0))
+        user_plays = int(ti.get('userplaycount', 0))
+        album_name = ti.get('album', {}).get('title', '') if ti.get('album') else ''
+        image = None
         if ti.get('album', {}).get('image'):
             image = next((i['#text'] for i in ti['album']['image']
                           if i['size'] == 'large' and i['#text']), None)
@@ -413,12 +401,13 @@ class FM(commands.Cog):
             embed.set_thumbnail(url=image)
         await ctx.send(embed=embed)
 
-    @commands.command(aliases=['tp'])
+    @commands.hybrid_command(aliases=['tp'])
+    @app_commands.describe(query='Artist - Track (leave blank for current track)')
     async def trackplays(self, ctx, *, query: str = None):
-        """Play count for current or named track (Artist - Track)."""
+        """Play count for current or named track."""
         lfm = self._get_lfm(ctx.author)
         if not lfm:
-            await ctx.send('No Last.fm username set. Use `!setfm <username>`.')
+            await ctx.send(self._no_lfm_msg())
             return
 
         async with aiohttp.ClientSession() as session:
@@ -452,12 +441,13 @@ class FM(commands.Cog):
         artist = ti.get('artist', {}).get('name', artist_name) if ti else artist_name
         await ctx.send(f'**{lfm}** has played **{name}** by {artist} **{user_plays:,}** times.')
 
-    @commands.command(aliases=['a'])
+    @commands.hybrid_command(aliases=['a'])
+    @app_commands.describe(query='Artist name (leave blank for current track\'s artist)')
     async def artist(self, ctx, *, query: str = None):
         """Info + your play count for current or named artist."""
         lfm = self._get_lfm(ctx.author)
         if not lfm:
-            await ctx.send('No Last.fm username set. Use `!setfm <username>`.')
+            await ctx.send(self._no_lfm_msg())
             return
 
         async with aiohttp.ClientSession() as session:
@@ -498,12 +488,13 @@ class FM(commands.Cog):
             embed.add_field(name='Bio', value=bio, inline=False)
         await ctx.send(embed=embed)
 
-    @commands.command(aliases=['ap'])
+    @commands.hybrid_command(aliases=['ap'])
+    @app_commands.describe(query='Artist name (leave blank for current track\'s artist)')
     async def artistplays(self, ctx, *, query: str = None):
         """Play count for current or named artist."""
         lfm = self._get_lfm(ctx.author)
         if not lfm:
-            await ctx.send('No Last.fm username set. Use `!setfm <username>`.')
+            await ctx.send(self._no_lfm_msg())
             return
 
         async with aiohttp.ClientSession() as session:
@@ -526,12 +517,13 @@ class FM(commands.Cog):
         name = ai.get('name', query) if ai else query
         await ctx.send(f'**{lfm}** has played **{name}** **{user_plays:,}** times.')
 
-    @commands.command(aliases=['ab'])
+    @commands.hybrid_command(aliases=['ab'])
+    @app_commands.describe(query='Artist - Album (leave blank for current album)')
     async def album(self, ctx, *, query: str = None):
         """Info + your play count for current or named album (Artist - Album)."""
         lfm = self._get_lfm(ctx.author)
         if not lfm:
-            await ctx.send('No Last.fm username set. Use `!setfm <username>`.')
+            await ctx.send(self._no_lfm_msg())
             return
 
         async with aiohttp.ClientSession() as session:
@@ -583,12 +575,13 @@ class FM(commands.Cog):
             embed.set_thumbnail(url=image)
         await ctx.send(embed=embed)
 
-    @commands.command(aliases=['abp'])
+    @commands.hybrid_command(aliases=['abp'])
+    @app_commands.describe(query='Artist - Album (leave blank for current album)')
     async def albumplays(self, ctx, *, query: str = None):
-        """Play count for current or named album (Artist - Album)."""
+        """Play count for current or named album."""
         lfm = self._get_lfm(ctx.author)
         if not lfm:
-            await ctx.send('No Last.fm username set. Use `!setfm <username>`.')
+            await ctx.send(self._no_lfm_msg())
             return
 
         async with aiohttp.ClientSession() as session:
@@ -625,13 +618,14 @@ class FM(commands.Cog):
     # ------------------------------------------------------------------ #
     #  Commands: who knows                                                 #
     # ------------------------------------------------------------------ #
-    @commands.command(aliases=['wk'])
+    @commands.hybrid_command(aliases=['wk'])
+    @app_commands.describe(artist='Artist name (leave blank for current track\'s artist)')
     async def whoknows(self, ctx, *, artist: str = None):
         """Server members ranked by plays for an artist."""
         if not artist:
             lfm = self._get_lfm(ctx.author)
             if not lfm:
-                await ctx.send('Provide an artist name, or set your Last.fm with `!setfm <username>`.')
+                await ctx.send('Provide an artist name, or set your Last.fm with `.setfm <username>`.')
                 return
             async with aiohttp.ClientSession() as session:
                 t = await self._current_track(session, lfm)
@@ -679,15 +673,16 @@ class FM(commands.Cog):
         )
         await ctx.send(embed=embed)
 
-    @commands.command(aliases=['wktr', 'wt'])
+    @commands.hybrid_command(aliases=['wktr', 'wt'])
+    @app_commands.describe(query='Artist - Track (leave blank for current track)')
     async def whoknowstrack(self, ctx, *, query: str = None):
-        """Server members ranked by plays for a track (Artist - Track)."""
+        """Server members ranked by plays for a track."""
         lfm_author = self._get_lfm(ctx.author)
 
         async with aiohttp.ClientSession() as session:
             if not query:
                 if not lfm_author:
-                    await ctx.send('Provide a track, or set your Last.fm with `!setfm <username>`.')
+                    await ctx.send('Provide a track, or set your Last.fm with `.setfm <username>`.')
                     return
                 t = await self._current_track(session, lfm_author)
                 if not t:
@@ -707,11 +702,7 @@ class FM(commands.Cog):
                     artist_name = t['artist']['#text'] if t else query
                     track_name  = query
 
-            registered = [
-                (ctx.guild.get_member(int(uid)), lfm)
-                for uid, lfm in self._all_users()
-                if ctx.guild.get_member(int(uid))
-            ]
+            registered = await self._guild_registered(ctx.guild)
             if not registered:
                 await ctx.send('No registered Last.fm users in this server.')
                 return
@@ -750,15 +741,16 @@ class FM(commands.Cog):
         )
         await ctx.send(embed=embed)
 
-    @commands.command(aliases=['wkab', 'wa'])
+    @commands.hybrid_command(aliases=['wkab', 'wa'])
+    @app_commands.describe(query='Artist - Album (leave blank for current album)')
     async def whoknowsalbum(self, ctx, *, query: str = None):
-        """Server members ranked by plays for an album (Artist - Album)."""
+        """Server members ranked by plays for an album."""
         lfm_author = self._get_lfm(ctx.author)
 
         async with aiohttp.ClientSession() as session:
             if not query:
                 if not lfm_author:
-                    await ctx.send('Provide an album, or set your Last.fm with `!setfm <username>`.')
+                    await ctx.send('Provide an album, or set your Last.fm with `.setfm <username>`.')
                     return
                 t = await self._current_track(session, lfm_author)
                 if not t:
@@ -778,11 +770,7 @@ class FM(commands.Cog):
                     artist_name = t['artist']['#text'] if t else query
                     album_name  = query
 
-            registered = [
-                (ctx.guild.get_member(int(uid)), lfm)
-                for uid, lfm in self._all_users()
-                if ctx.guild.get_member(int(uid))
-            ]
+            registered = await self._guild_registered(ctx.guild)
             if not registered:
                 await ctx.send('No registered Last.fm users in this server.')
                 return
@@ -824,19 +812,20 @@ class FM(commands.Cog):
     # ------------------------------------------------------------------ #
     #  Commands: taste / overview / streak                                 #
     # ------------------------------------------------------------------ #
-    @commands.command(aliases=['t'])
-    async def taste(self, ctx, other: discord.Member, period: str = 'overall'):
+    @commands.hybrid_command(aliases=['t'])
+    @app_commands.describe(other='The other user to compare with', period='Time period')
+    async def taste(self, ctx, other: discord.Member, period: Period = 'all'):
         """Compare top artist overlap between you and another user."""
         lfm1 = self._get_lfm(ctx.author)
         lfm2 = self._get_lfm(other)
         if not lfm1:
-            await ctx.send('Set your Last.fm with `!setfm <username>`.')
+            await ctx.send('Set your Last.fm with `.setfm <username>`.')
             return
         if not lfm2:
             await ctx.send(f'{other.display_name} has no Last.fm set.')
             return
 
-        lfm_period = PERIODS.get(period.lower(), 'overall')
+        lfm_period = PERIODS.get(period, 'overall')
 
         async def fetch_top_artists(session, lfm):
             data = await self._api(session, {
@@ -866,10 +855,7 @@ class FM(commands.Cog):
             key=lambda x: x[1] + x[2], reverse=True
         )[:10]
 
-        lines = [
-            f'**{name}** — {p1:,} / {p2:,}'
-            for name, p1, p2 in shared
-        ]
+        lines = [f'**{name}** — {p1:,} / {p2:,}' for name, p1, p2 in shared]
         embed = discord.Embed(
             title=f'Taste comparison — {lfm1} vs {lfm2}',
             description=f'**{overlap_pct}% overlap** ({len(shared_keys)} shared artists)\n\n' + '\n'.join(lines),
@@ -878,23 +864,23 @@ class FM(commands.Cog):
         embed.set_footer(text=f'{lfm1} plays / {lfm2} plays')
         await ctx.send(embed=embed)
 
-    @commands.command(aliases=['o'])
-    async def overview(self, ctx, member_or_period: str = None, period_arg: str = None):
+    @commands.hybrid_command(aliases=['o'])
+    @app_commands.describe(member='User to look up (default: you)', period='Time period')
+    async def overview(self, ctx, member: Optional[discord.Member] = None, period: Period = 'week'):
         """Top track + album + artist summary for a period."""
-        member, period_key = await self._resolve_member_period(ctx, member_or_period, period_arg)
         user = member or ctx.author
         lfm = self._get_lfm(user)
         if not lfm:
-            await ctx.send('No Last.fm username set. Use `!setfm <username>`.')
+            await ctx.send(self._no_lfm_msg())
             return
 
-        period = PERIODS.get(period_key, '7day')
+        lfm_period = PERIODS.get(period, '7day')
 
         async def fetch_top(session, method, key, subkey):
             data = await self._api(session, {
                 'method': method,
                 'user': lfm,
-                'period': period,
+                'period': lfm_period,
                 'limit': 1
             })
             items = data.get(key, {}).get(subkey, [])
@@ -908,11 +894,7 @@ class FM(commands.Cog):
                     fetch_top(session, 'user.gettoptracks',  'toptracks',  'track'),
                 )
 
-        period_label = next((k for k, v in PERIODS.items() if v == period), period_key)
-        embed = discord.Embed(
-            title=f'Overview ({period_label}) — {lfm}',
-            color=0xD51007
-        )
+        embed = discord.Embed(title=f'Overview ({period}) — {lfm}', color=0xD51007)
         if top_artist:
             embed.add_field(
                 name='Top artist',
@@ -933,13 +915,14 @@ class FM(commands.Cog):
             )
         await ctx.send(embed=embed)
 
-    @commands.command(aliases=['str'])
-    async def streak(self, ctx, member: discord.Member = None):
+    @commands.hybrid_command(aliases=['str'])
+    @app_commands.describe(member='User to look up (default: you)')
+    async def streak(self, ctx, member: Optional[discord.Member] = None):
         """Current listening streak (artist / album / track)."""
         user = member or ctx.author
         lfm = self._get_lfm(user)
         if not lfm:
-            await ctx.send('No Last.fm username set. Use `!setfm <username>`.')
+            await ctx.send(self._no_lfm_msg())
             return
 
         async with ctx.typing():
@@ -981,15 +964,14 @@ class FM(commands.Cog):
         embed = discord.Embed(title=f'Listening streak — {lfm}', color=0xD51007)
         embed.add_field(name='Artist', value=f'**{artist_name}** × {artist_streak}', inline=True)
         if album_name:
-            embed.add_field(name='Album',  value=f'**{album_name}** × {album_streak}', inline=True)
-        embed.add_field(name='Track',  value=f'**{track_name}** × {track_streak}', inline=True)
+            embed.add_field(name='Album', value=f'**{album_name}** × {album_streak}', inline=True)
+        embed.add_field(name='Track', value=f'**{track_name}** × {track_streak}', inline=True)
         await ctx.send(embed=embed)
 
     # ------------------------------------------------------------------ #
     #  Commands: server-wide aggregates                                    #
     # ------------------------------------------------------------------ #
     async def _server_aggregate(self, ctx, method, key, subkey, title):
-        """Shared logic for serverartists / serveralbums / servertracks."""
         registered = await self._guild_registered(ctx.guild)
         if not registered:
             await ctx.send('No registered Last.fm users in this server.')
@@ -1028,30 +1010,27 @@ class FM(commands.Cog):
         embed = discord.Embed(title=title, description='\n'.join(lines), color=0xD51007)
         await ctx.send(embed=embed)
 
-    @commands.command()
+    @commands.hybrid_command()
     async def serverartists(self, ctx):
         """Aggregate top artists across all server members."""
         await self._server_aggregate(
-            ctx,
-            'user.gettopartists', 'topartists', 'artist',
+            ctx, 'user.gettopartists', 'topartists', 'artist',
             f'Server top artists — {ctx.guild.name}'
         )
 
-    @commands.command()
+    @commands.hybrid_command()
     async def serveralbums(self, ctx):
         """Aggregate top albums across all server members."""
         await self._server_aggregate(
-            ctx,
-            'user.gettopalbums', 'topalbums', 'album',
+            ctx, 'user.gettopalbums', 'topalbums', 'album',
             f'Server top albums — {ctx.guild.name}'
         )
 
-    @commands.command()
+    @commands.hybrid_command()
     async def servertracks(self, ctx):
         """Aggregate top tracks across all server members."""
         await self._server_aggregate(
-            ctx,
-            'user.gettoptracks', 'toptracks', 'track',
+            ctx, 'user.gettoptracks', 'toptracks', 'track',
             f'Server top tracks — {ctx.guild.name}'
         )
 

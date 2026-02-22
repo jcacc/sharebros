@@ -36,6 +36,8 @@ class ShareBro(commands.Bot):
                 print(f'[BOT] Cog loaded successfully: {extension}')
             except Exception as e:
                 print(f'[BOT] Cog "{extension}" failed to load. Error: {e}')
+        await self.tree.sync()
+        print('[BOT] slash commands synced')
 
 bot = ShareBro(command_prefix='.', intents=intents)
 

@@ -20,7 +20,7 @@ def _search(query):
 
 
 class YouTube(commands.Cog):
-    @commands.command(aliases=['yt'])
+    @commands.hybrid_command(aliases=['yt'])
     async def youtube(self, ctx, *, query: str):
         """Search YouTube and return the top 5 results."""
         async with ctx.typing():
