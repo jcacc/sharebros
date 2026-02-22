@@ -19,6 +19,9 @@ initial_extensions = [
     'cogs.detroiters',
     'cogs.deadwood',
     'cogs.fixembed',
+    'cogs.fm',
+    'cogs.sysinfo',
+    'cogs.youtube',
 ]
 
 intents = discord.Intents.default()
@@ -34,7 +37,7 @@ class ShareBro(commands.Bot):
             except Exception as e:
                 print(f'[BOT] Cog "{extension}" failed to load. Error: {e}')
 
-bot = ShareBro(command_prefix='!', intents=intents)
+bot = ShareBro(command_prefix='.', intents=intents)
 
 @bot.event
 async def on_ready():

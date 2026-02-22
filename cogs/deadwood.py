@@ -9,16 +9,16 @@ class deadwood(commands.Cog):
         self.bot = bot
 
     @commands.command(name='deadwood', help='deadwood flow')
-    async def deadwood(self, ctx, word: str = None):
+    async def deadwood(self, ctx, *, word: str = None):
         try:
             with open('/home/jca/dev/python/sharebro/cogs/deadwood.txt', 'r') as file:
                 lines = file.readlines()
 
                 # Filter the lines if a word is provided
                 if word:
-                    filtered_lines = [line for line in lines if word.lower() in line.lower()]
+                    filtered_lines = [line for line in lines if word.lower() in line.lower() and line.strip()]
                 else:
-                    filtered_lines = lines
+                    filtered_lines = [line for line in lines if line.strip()]
 
                 # Choose a random line if there are matching results
                 if filtered_lines:
