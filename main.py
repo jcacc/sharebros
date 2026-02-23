@@ -22,6 +22,7 @@ initial_extensions = [
     'cogs.fm',
     'cogs.sysinfo',
     'cogs.youtube',
+    'cogs.imdb',
 ]
 
 intents = discord.Intents.default()
