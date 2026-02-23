@@ -12,62 +12,94 @@ def load_config(config_file='./config.yaml'):
 
 CONFIG = load_config()
 
-OMDB_URL = 'http://www.omdbapi.com/'
+TMDB_BASE = 'https://api.themoviedb.org/3'
+TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/w500'
 
 class IMDb(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.api_key = CONFIG['omdb']['api_key']
+        self.api_key = CONFIG['tmdb']['api_key']
 
-    @commands.command(name='imdb', help='Search for a movie or show on IMDb.')
+    @commands.command(name='imdb', help='Search for a movie or show.')
     async def imdb(self, ctx, *, query):
-        data = self.search(query)
-        if not data or data.get('Response') == 'False':
+        result = self.search(query)
+        if not result:
             await ctx.send(f'No results found for "{query}".')
             return
 
-        embed = self.build_embed(data)
+        media_type = result.get('media_type')
+        if media_type not in ('movie', 'tv'):
+            await ctx.send(f'No results found for "{query}".')
+            return
+
+        details = self.get_details(result['id'], media_type)
+        if not details:
+            await ctx.send('Could not fetch details for that title.')
+            return
+
+        embed = self.build_embed(details, media_type)
         await ctx.send(embed=embed)
+
+        title = details.get('title') or details.get('name', '?')
+        year = (details.get('release_date') or details.get('first_air_date') or '')[:4]
         print(f'[IMDB] {ctx.author} searched for "{query}"')
-        print(f'[IMDB] ↳ returned: {data["Title"]} ({data["Year"]})')
+        print(f'[IMDB] ↳ returned: {title} ({year})')
 
     def search(self, query):
-        response = requests.get(
-            OMDB_URL,
-            params={
-                'apikey': self.api_key,
-                't': query,
-                'plot': 'short',
-            }
+        resp = requests.get(
+            f'{TMDB_BASE}/search/multi',
+            params={'api_key': self.api_key, 'query': query},
         )
-        return response.json()
+        results = resp.json().get('results', [])
+        # Return first movie or tv result
+        for r in results:
+            if r.get('media_type') in ('movie', 'tv'):
+                return r
+        return None
 
-    def build_embed(self, data):
-        title = data.get('Title', 'Unknown')
-        year = data.get('Year', '')
-        rating = data.get('imdbRating', 'N/A')
-        plot = data.get('Plot', 'No plot available.')
-        poster = data.get('Poster', '')
-        imdb_id = data.get('imdbID', '')
-        genre = data.get('Genre', 'N/A')
-        director = data.get('Director', 'N/A')
-        actors = data.get('Actors', 'N/A')
+    def get_details(self, tmdb_id, media_type):
+        resp = requests.get(
+            f'{TMDB_BASE}/{media_type}/{tmdb_id}',
+            params={'api_key': self.api_key, 'append_to_response': 'credits'},
+        )
+        return resp.json() if resp.ok else None
 
-        imdb_url = f'https://www.imdb.com/title/{imdb_id}/' if imdb_id else None
+    def build_embed(self, data, media_type):
+        title = data.get('title') or data.get('name', 'Unknown')
+        date = data.get('release_date') or data.get('first_air_date') or ''
+        year = date[:4] if date else 'N/A'
+        rating = data.get('vote_average')
+        rating_str = f'{rating:.1f}/10' if rating else 'N/A'
+        plot = data.get('overview') or 'No plot available.'
+        genres = ', '.join(g['name'] for g in data.get('genres', []))
+        poster_path = data.get('poster_path')
+        tmdb_url = f'https://www.themoviedb.org/{media_type}/{data["id"]}'
+
+        credits = data.get('credits', {})
+        cast = ', '.join(m['name'] for m in credits.get('cast', [])[:5]) or 'N/A'
+
+        if media_type == 'movie':
+            directors = [m['name'] for m in credits.get('crew', []) if m.get('job') == 'Director']
+            creator = ', '.join(directors) or 'N/A'
+            creator_label = 'Director'
+        else:
+            creators = [c['name'] for c in data.get('created_by', [])]
+            creator = ', '.join(creators) or 'N/A'
+            creator_label = 'Created By'
 
         embed = discord.Embed(
             title=f'{title} ({year})',
-            url=imdb_url,
-            color=0xf5c518,  # IMDb yellow
+            url=tmdb_url,
+            color=0x01b4e4,  # TMDb blue
         )
-        embed.add_field(name='Rating', value=f'⭐ {rating}/10', inline=True)
-        embed.add_field(name='Genre', value=genre, inline=True)
-        embed.add_field(name='Director', value=director, inline=False)
-        embed.add_field(name='Cast', value=actors, inline=False)
+        embed.add_field(name='Rating', value=f'⭐ {rating_str}', inline=True)
+        embed.add_field(name='Genre', value=genres or 'N/A', inline=True)
+        embed.add_field(name=creator_label, value=creator, inline=False)
+        embed.add_field(name='Cast', value=cast, inline=False)
         embed.add_field(name='Plot', value=plot, inline=False)
 
-        if poster and poster != 'N/A':
-            embed.set_thumbnail(url=poster)
+        if poster_path:
+            embed.set_thumbnail(url=f'{TMDB_IMAGE_BASE}{poster_path}')
 
         return embed
 
