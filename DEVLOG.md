@@ -1,5 +1,12 @@
 # sharebro devlog
 
+## 2026-02-23 — Add imdb cog; switch to TMDb Bearer auth
+
+### imdb cog
+Added `cogs/imdb.py` — `.imdb <title>` searches TMDb for movies and TV shows, returns a Discord embed with title, year, rating, genre, director/creator, top cast, plot, and poster thumbnail. Links to TMDb page.
+
+Auth uses the TMDb Read Access Token (Bearer header) via `config.yaml` key `tmdb.read_access_token`. The v3 API key is also stored but not used for requests.
+
 ## 2026-02-21 — Expand fm cog; add sysinfo + youtube; slash commands; prefix change
 
 ### fm cog — full fmbot-style rewrite
