@@ -18,7 +18,7 @@ TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/w500'
 class IMDb(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.api_key = CONFIG['tmdb']['api_key']
+        self.headers = {'Authorization': f'Bearer {CONFIG["tmdb"]["read_access_token"]}'}
 
     @commands.command(name='imdb', help='Search for a movie or show.')
     async def imdb(self, ctx, *, query):
@@ -48,7 +48,8 @@ class IMDb(commands.Cog):
     def search(self, query):
         resp = requests.get(
             f'{TMDB_BASE}/search/multi',
-            params={'api_key': self.api_key, 'query': query},
+            params={'query': query},
+            headers=self.headers,
         )
         results = resp.json().get('results', [])
         # Return first movie or tv result
@@ -60,7 +61,8 @@ class IMDb(commands.Cog):
     def get_details(self, tmdb_id, media_type):
         resp = requests.get(
             f'{TMDB_BASE}/{media_type}/{tmdb_id}',
-            params={'api_key': self.api_key, 'append_to_response': 'credits'},
+            params={'append_to_response': 'credits'},
+            headers=self.headers,
         )
         return resp.json() if resp.ok else None
 
