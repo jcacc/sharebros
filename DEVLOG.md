@@ -1,5 +1,14 @@
 # sharebro devlog
 
+## 2026-02-23 — Add discoverydate command to fm cog
+
+### fm cog — discoverydate
+Added `.discoverydate` (aliases: `.dd`, `.firstlisten`) — shows when a user first listened to an artist, which track it was, and total all-time plays.
+
+Uses `user.getArtistTracks` with `limit=1, page=1` to get `total` and `totalPages`, then fetches `page=totalPages` to retrieve the oldest scrobble's timestamp. Displays date, human-readable "X years/months/days ago", first track scrobbled, and total play count.
+
+Works with no argument (uses current track's artist), a named artist, or `[@user] [artist]` to look up another server member.
+
 ## 2026-02-23 — Add crowns system to fm cog
 
 ### fm cog — crowns system

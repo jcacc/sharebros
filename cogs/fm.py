@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import sqlite3
 import discord
 from discord.ext import commands
@@ -1021,6 +1022,84 @@ class FM(commands.Cog):
         if album_name:
             embed.add_field(name='Album', value=f'**{album_name}** × {album_streak}', inline=True)
         embed.add_field(name='Track', value=f'**{track_name}** × {track_streak}', inline=True)
+        await ctx.send(embed=embed)
+
+    @commands.hybrid_command(aliases=['dd', 'firstlisten'])
+    @app_commands.describe(member='User to look up (default: you)', artist='Artist name (leave blank for current track\'s artist)')
+    async def discoverydate(self, ctx, member: Optional[discord.Member] = None, *, artist: str = None):
+        """Show when you first listened to an artist."""
+        user = member or ctx.author
+        lfm = self._get_lfm(user)
+        if not lfm:
+            await ctx.send(self._no_lfm_msg() if user == ctx.author else f'{user.display_name} has no Last.fm set.')
+            return
+
+        async with aiohttp.ClientSession() as session:
+            if not artist:
+                t = await self._current_track(session, lfm)
+                if not t:
+                    await ctx.send('No recent track found. Provide an artist name.')
+                    return
+                artist = t['artist']['#text']
+
+            async with ctx.typing():
+                data = await self._api(session, {
+                    'method': 'user.getArtistTracks',
+                    'user': lfm,
+                    'artist': artist,
+                    'limit': 1,
+                    'page': 1
+                })
+
+            attr = data.get('artisttracks', {}).get('@attr', {})
+            total = int(attr.get('total', 0))
+            total_pages = int(attr.get('totalPages', 1))
+            artist_display = attr.get('artist', artist)
+
+            if total == 0:
+                await ctx.send(f'**{lfm}** has no scrobbles for **{artist}**.')
+                return
+
+            if total_pages > 1:
+                last_data = await self._api(session, {
+                    'method': 'user.getArtistTracks',
+                    'user': lfm,
+                    'artist': artist,
+                    'limit': 1,
+                    'page': total_pages
+                })
+                tracks = last_data.get('artisttracks', {}).get('track', [])
+            else:
+                tracks = data.get('artisttracks', {}).get('track', [])
+
+        if isinstance(tracks, dict):
+            tracks = [tracks]
+        if not tracks:
+            await ctx.send(f'Could not retrieve discovery date for **{artist}**.')
+            return
+
+        oldest = tracks[-1]
+        uts = int(oldest.get('date', {}).get('uts', 0))
+        if not uts:
+            await ctx.send(f'Could not determine discovery date for **{artist}**.')
+            return
+
+        dt = datetime.datetime.utcfromtimestamp(uts)
+        days = (datetime.datetime.utcnow() - dt).days
+        if days >= 365:
+            ago = f'{days // 365} year{"s" if days // 365 != 1 else ""} ago'
+        elif days >= 30:
+            ago = f'{days // 30} month{"s" if days // 30 != 1 else ""} ago'
+        else:
+            ago = f'{days} day{"s" if days != 1 else ""} ago'
+
+        first_track = oldest.get('name', '')
+        embed = discord.Embed(title=f'Discovery — {artist_display}', color=0xD51007)
+        embed.set_author(name=lfm)
+        embed.add_field(name='First listened', value=f'{dt.strftime("%-d %B %Y")} ({ago})', inline=False)
+        if first_track:
+            embed.add_field(name='First track', value=first_track, inline=True)
+        embed.add_field(name='Total plays', value=f'{total:,}', inline=True)
         await ctx.send(embed=embed)
 
     # ------------------------------------------------------------------ #
