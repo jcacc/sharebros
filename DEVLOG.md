@@ -1,5 +1,16 @@
 # sharebro devlog
 
+## 2026-02-23 — Add crowns system to fm cog
+
+### fm cog — crowns system
+Added persistent crown tracking to `cogs/fm.py`. The #1 listener per artist per server earns the crown, which can be stolen and is announced when it changes hands.
+
+**DB:** New `crowns` table in `fm.db` — `(guild_id, artist_name)` primary key, stores `artist_display`, `discord_id`, `play_count`. Helpers: `_get_crown`, `_set_crown`, `_guild_crowns`.
+
+**`whoknows` changes:** `fetch_plays` now returns full member objects. After resolving the leaderboard, if #1 has ≥30 plays the crown is awarded/updated silently, or a steal is announced: `👑 **name** stole the crown for **Artist** from oldname with X,XXX plays!`. Crown holder gets 👑 prefix instead of a position number in the embed.
+
+**New commands:** `crown <artist>`, `crowns [@user]` (cap 20), `servercrowns` (cap 15, sorted by play count), `topcrowns` (members ranked by crown count).
+
 ## 2026-02-23 — Add imdb cog; switch to TMDb Bearer auth
 
 ### imdb cog

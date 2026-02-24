@@ -37,6 +37,12 @@ def _init_db(db_path):
         'CREATE TABLE IF NOT EXISTS users '
         '(discord_id TEXT PRIMARY KEY, lastfm_username TEXT NOT NULL)'
     )
+    con.execute(
+        'CREATE TABLE IF NOT EXISTS crowns '
+        '(guild_id TEXT NOT NULL, artist_name TEXT NOT NULL, '
+        'artist_display TEXT NOT NULL, discord_id TEXT NOT NULL, '
+        'play_count INTEGER NOT NULL, PRIMARY KEY (guild_id, artist_name))'
+    )
     con.commit()
     if os.path.exists(USERS_FILE):
         try:
@@ -99,6 +105,34 @@ class FM(commands.Cog):
                     continue
             result.append((member, lfm))
         return result
+
+    def _get_crown(self, guild_id, artist_name):
+        con = sqlite3.connect(DB_PATH)
+        row = con.execute(
+            'SELECT artist_display, discord_id, play_count FROM crowns WHERE guild_id = ? AND artist_name = ?',
+            (guild_id, artist_name.strip().lower())
+        ).fetchone()
+        con.close()
+        return row  # (artist_display, discord_id, play_count) or None
+
+    def _set_crown(self, guild_id, artist_name, artist_display, discord_id, play_count):
+        con = sqlite3.connect(DB_PATH)
+        con.execute(
+            'INSERT OR REPLACE INTO crowns (guild_id, artist_name, artist_display, discord_id, play_count) '
+            'VALUES (?, ?, ?, ?, ?)',
+            (guild_id, artist_name.strip().lower(), artist_display, str(discord_id), play_count)
+        )
+        con.commit()
+        con.close()
+
+    def _guild_crowns(self, guild_id):
+        con = sqlite3.connect(DB_PATH)
+        rows = con.execute(
+            'SELECT artist_display, discord_id, play_count FROM crowns WHERE guild_id = ? ORDER BY play_count DESC',
+            (guild_id,)
+        ).fetchall()
+        con.close()
+        return rows
 
     # ------------------------------------------------------------------ #
     #  API helpers                                                         #
@@ -642,13 +676,13 @@ class FM(commands.Cog):
         async def fetch_plays(session, member, lfm):
             try:
                 data = await self._api(session, {
-                    'method': 'user.getartistinfo',
-                    'user': lfm,
+                    'method': 'artist.getInfo',
                     'artist': artist,
+                    'username': lfm,
                     'autocorrect': 1
                 })
                 plays = int(data.get('artist', {}).get('stats', {}).get('userplaycount', 0))
-                return (member.display_name, plays)
+                return (member, plays)
             except Exception:
                 return None
 
@@ -660,12 +694,33 @@ class FM(commands.Cog):
             [r for r in raw if r and r[1] > 0],
             key=lambda x: x[1], reverse=True
         )
+
+        crown_holder_id = None
+        if results:
+            top_member, top_plays = results[0]
+            if top_plays >= 30:
+                existing = self._get_crown(str(ctx.guild.id), artist.strip().lower())
+                if existing is None:
+                    self._set_crown(str(ctx.guild.id), artist, artist, str(top_member.id), top_plays)
+                    crown_holder_id = top_member.id
+                elif existing[1] == str(top_member.id):
+                    self._set_crown(str(ctx.guild.id), artist, artist, str(top_member.id), top_plays)
+                    crown_holder_id = top_member.id
+                else:
+                    old_member = ctx.guild.get_member(int(existing[1]))
+                    old_name = old_member.display_name if old_member else existing[0]
+                    self._set_crown(str(ctx.guild.id), artist, artist, str(top_member.id), top_plays)
+                    await ctx.send(f'👑 **{top_member.display_name}** stole the crown for **{artist}** from {old_name} with {top_plays:,} plays!')
+                    crown_holder_id = top_member.id
+
         if not results:
             await ctx.send(f'Nobody in this server has listened to **{artist}**.')
             return
 
-        lines = [f'`{i+1}.` **{name}** — {plays:,} plays'
-                 for i, (name, plays) in enumerate(results)]
+        lines = []
+        for i, (m, plays) in enumerate(results):
+            prefix = '👑' if (i == 0 and crown_holder_id == m.id) else f'`{i+1}.`'
+            lines.append(f'{prefix} **{m.display_name}** — {plays:,} plays')
         embed = discord.Embed(
             title=f'Who knows {artist}?',
             description='\n'.join(lines),
@@ -1033,6 +1088,83 @@ class FM(commands.Cog):
             ctx, 'user.gettoptracks', 'toptracks', 'track',
             f'Server top tracks — {ctx.guild.name}'
         )
+
+    # ------------------------------------------------------------------ #
+    #  Commands: crowns                                                    #
+    # ------------------------------------------------------------------ #
+    @commands.hybrid_command()
+    @app_commands.describe(artist='Artist name')
+    async def crown(self, ctx, *, artist: str):
+        """Show who holds the crown for an artist in this server."""
+        existing = self._get_crown(str(ctx.guild.id), artist.strip().lower())
+        if existing is None:
+            await ctx.send(f'No crown holder for **{artist}** in this server yet.')
+            return
+        artist_display, discord_id, play_count = existing
+        member = ctx.guild.get_member(int(discord_id))
+        name = member.display_name if member else f'<@{discord_id}>'
+        await ctx.send(f'👑 **{name}** holds the crown for **{artist_display}** with {play_count:,} plays.')
+
+    @commands.hybrid_command()
+    @app_commands.describe(member='User to look up (default: you)')
+    async def crowns(self, ctx, member: Optional[discord.Member] = None):
+        """List a user's crowns in this server."""
+        user = member or ctx.author
+        all_crowns = self._guild_crowns(str(ctx.guild.id))
+        user_crowns = [(ad, pc) for ad, did, pc in all_crowns if did == str(user.id)]
+        if not user_crowns:
+            await ctx.send(f'**{user.display_name}** holds no crowns in this server.')
+            return
+        total = len(user_crowns)
+        lines = [f'`{i+1}.` **{ad}** — {pc:,} plays' for i, (ad, pc) in enumerate(user_crowns[:20])]
+        embed = discord.Embed(
+            title=f'👑 {user.display_name}\'s crowns ({total} total)',
+            description='\n'.join(lines),
+            color=0xD51007
+        )
+        await ctx.send(embed=embed)
+
+    @commands.hybrid_command()
+    async def servercrowns(self, ctx):
+        """All crown holders in this server, sorted by play count."""
+        all_crowns = self._guild_crowns(str(ctx.guild.id))
+        if not all_crowns:
+            await ctx.send('No crowns have been awarded in this server yet.')
+            return
+        lines = []
+        for i, (artist_display, discord_id, play_count) in enumerate(all_crowns[:15]):
+            member = ctx.guild.get_member(int(discord_id))
+            name = member.display_name if member else f'<@{discord_id}>'
+            lines.append(f'`{i+1}.` **{artist_display}** — {name} ({play_count:,} plays)')
+        embed = discord.Embed(
+            title=f'Server crowns — {ctx.guild.name}',
+            description='\n'.join(lines),
+            color=0xD51007
+        )
+        await ctx.send(embed=embed)
+
+    @commands.hybrid_command()
+    async def topcrowns(self, ctx):
+        """Server members ranked by number of crowns held."""
+        all_crowns = self._guild_crowns(str(ctx.guild.id))
+        if not all_crowns:
+            await ctx.send('No crowns have been awarded in this server yet.')
+            return
+        counts = {}
+        for _, discord_id, _ in all_crowns:
+            counts[discord_id] = counts.get(discord_id, 0) + 1
+        ranked = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+        lines = []
+        for i, (discord_id, count) in enumerate(ranked[:15]):
+            member = ctx.guild.get_member(int(discord_id))
+            name = member.display_name if member else f'<@{discord_id}>'
+            lines.append(f'`{i+1}.` **{name}** — {count} crown{"s" if count != 1 else ""}')
+        embed = discord.Embed(
+            title=f'Top crown holders — {ctx.guild.name}',
+            description='\n'.join(lines),
+            color=0xD51007
+        )
+        await ctx.send(embed=embed)
 
 
 async def setup(bot):
