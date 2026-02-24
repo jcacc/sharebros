@@ -1024,8 +1024,82 @@ class FM(commands.Cog):
         embed.add_field(name='Track', value=f'**{track_name}** × {track_streak}', inline=True)
         await ctx.send(embed=embed)
 
-    # discoverydate: disabled — user.getArtistTracks is deprecated (error 27) and
-    # the timestamp binary search approach is not accurate enough to be useful.
+    @commands.hybrid_command()
+    @app_commands.describe(year='Year (e.g. 2019)', member='User to look up (default: you)')
+    async def year(self, ctx, year: int, member: Optional[discord.Member] = None):
+        """First and last scrobble of a given year."""
+        user = member or ctx.author
+        lfm = self._get_lfm(user)
+        if not lfm:
+            await ctx.send(self._no_lfm_msg() if user == ctx.author else f'{user.display_name} has no Last.fm set.')
+            return
+
+        now = datetime.datetime.utcnow()
+        if year < 2002 or year > now.year:
+            await ctx.send(f'Year must be between 2002 and {now.year}.')
+            return
+
+        jan1_ts  = int(datetime.datetime(year, 1, 1).timestamp())
+        dec31_ts = int(datetime.datetime(year, 12, 31, 23, 59, 59).timestamp())
+        to_ts    = min(dec31_ts, int(now.timestamp()))
+
+        async with aiohttp.ClientSession() as session:
+            async with ctx.typing():
+                # page 1 = most recent in window = last scrobble of year
+                p1 = await self._api(session, {
+                    'method': 'user.getRecentTracks',
+                    'user': lfm,
+                    'from': jan1_ts,
+                    'to': to_ts,
+                    'limit': 1,
+                    'page': 1
+                })
+                attr = p1.get('recenttracks', {}).get('@attr', {})
+                total       = int(attr.get('total', 0))
+                total_pages = int(attr.get('totalPages', 1))
+
+                if total == 0:
+                    await ctx.send(f'**{lfm}** has no scrobbles in {year}.')
+                    return
+
+                last_tracks = p1.get('recenttracks', {}).get('track', [])
+                if isinstance(last_tracks, dict):
+                    last_tracks = [last_tracks]
+                last_tracks = [t for t in last_tracks if not t.get('@attr', {}).get('nowplaying')]
+                last_track  = last_tracks[0] if last_tracks else None
+
+                # page total_pages = oldest in window = first scrobble of year
+                if total_pages > 1:
+                    p_first = await self._api(session, {
+                        'method': 'user.getRecentTracks',
+                        'user': lfm,
+                        'from': jan1_ts,
+                        'to': to_ts,
+                        'limit': 1,
+                        'page': total_pages
+                    })
+                    first_tracks = p_first.get('recenttracks', {}).get('track', [])
+                    if isinstance(first_tracks, dict):
+                        first_tracks = [first_tracks]
+                    first_track = first_tracks[0] if first_tracks else None
+                else:
+                    first_track = last_track
+
+        def fmt_track(t):
+            if not t:
+                return 'Unknown'
+            name        = t.get('name', '?')
+            artist      = t.get('artist', {})
+            artist_name = artist.get('#text', '') if isinstance(artist, dict) else str(artist)
+            uts         = int(t.get('date', {}).get('uts', 0))
+            date_str    = datetime.datetime.utcfromtimestamp(uts).strftime('%-d %B') if uts else ''
+            return f'**{name}** by {artist_name}' + (f' · {date_str}' if date_str else '')
+
+        embed = discord.Embed(title=f'{year} in scrobbles — {lfm}', color=0xD51007)
+        embed.add_field(name='First scrobble', value=fmt_track(first_track), inline=False)
+        embed.add_field(name='Last scrobble',  value=fmt_track(last_track),  inline=False)
+        embed.set_footer(text=f'{total:,} scrobbles in {year}')
+        await ctx.send(embed=embed)
 
     # ------------------------------------------------------------------ #
     #  Commands: server-wide aggregates                                    #

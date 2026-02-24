@@ -1,6 +1,13 @@
 # sharebro devlog
 
-## 2026-02-23 — Add discoverydate command to fm cog
+## 2026-02-23 — Add year command to fm cog
+
+### fm cog — year
+Added `.year <year> [@user]` — shows the first and last scrobble of a given year, plus total scrobble count for that year as footer.
+
+Uses `user.getRecentTracks` with `from`/`to` UNIX timestamps (Jan 1 / Dec 31 of the given year). Two API calls: page 1 (newest = last scrobble) and page `totalPages` (oldest = first scrobble). For the current year, `to` is clamped to now.
+
+## 2026-02-23 — Add discoverydate command to fm cog (disabled)
 
 ### fm cog — discoverydate
 Added `.discoverydate` (aliases: `.dd`, `.firstlisten`) — shows when a user first listened to an artist, which track it was, and total all-time plays.
