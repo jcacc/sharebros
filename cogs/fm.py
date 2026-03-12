@@ -191,7 +191,7 @@ class FM(commands.Cog):
         con = sqlite3.connect(DB_PATH)
         row = con.execute(
             'SELECT artist, track, album, scrobbled_at FROM scrobbles '
-            'WHERE lfm_username = ? AND LOWER(artist) = ? ORDER BY scrobbled_at ASC LIMIT 1',
+            'WHERE lfm_username = ? AND LOWER(artist) = ? AND scrobbled_at >= 1000000000 ORDER BY scrobbled_at ASC LIMIT 1',
             (lfm, artist_lower)
         ).fetchone()
         con.close()
@@ -296,7 +296,7 @@ class FM(commands.Cog):
                 if t.get('@attr', {}).get('nowplaying') == 'true':
                     continue
                 uts = t.get('date', {}).get('uts')
-                if not uts:
+                if not uts or int(uts) < 1000000000:
                     continue
                 artist = t.get('artist', {}).get('#text', '') or ''
                 track  = t.get('name', '') or ''
