@@ -1,5 +1,28 @@
 # sharebro devlog
 
+## 2026-03-12 — discoverydate via local scrobble cache; artist resolution fix
+
+### fm cog — .discoverydate (rework)
+
+Rewrote `.discoverydate` (`.dd`, `.firstlisten`) to use a local SQLite scrobble cache instead of the Last.fm API. The original implementation relied on `user.getArtistTracks` (dead, error 27); a follow-up binary search on `user.getRecentTracks` was inaccurate when a time window had thousands of tracks, since the API only returns up to 200 per page and plays in the middle were invisible.
+
+**How it works:** On first use, bulk-imports the user's full scrobble history from `user.getRecentTracks` into a local `scrobbles` table (200 tracks/page, batched 5 pages at a time at ~5 req/s with a 1s sleep between batches). Subsequent calls do a fast delta sync — only fetches scrobbles newer than `last_synced_ts` — if the cache is older than 1 hour. Within the same hour it's a pure cache hit, instant.
+
+**DB additions:**
+- `scrobbles (lfm_username, artist, track, album, scrobbled_at)` — composite PK includes artist+track to handle same-second collisions; `INSERT OR IGNORE` for safe re-runs
+- `idx_scrobbles_user_artist` — index on `(lfm_username, LOWER(artist))` for fast lookups
+- `scrobble_sync (lfm_username, last_synced_ts, total_cached, synced_at)` — written only after a successful full sync; crash mid-sync is safe to re-run
+
+**New DB helpers:** `_get_sync_state`, `_update_sync_state`, `_insert_scrobbles`, `_query_first_scrobble`, `_count_scrobbles_for_artist`, `_count_cached_scrobbles`
+
+**`_sync_scrobbles(session, lfm, status_callback)`:** Handles now-playing track (skipped via `nowplaying` attr + missing `uts`), single-track dict response normalization, and API errors on individual pages (returns `[]`, sync continues). Progress callback is throttled to 1 edit per 3 seconds.
+
+**Embed shows:** Discord timestamp `<t:ts:D>`, human date (Day Month Year HH:MM UTC), first track + album, total plays in cache, footer with cache last-updated time and total scrobbles cached.
+
+### fm cog — _resolve_artist fix
+
+`_resolve_artist` previously always picked the result with the most listeners, causing "Zapp" to resolve to Frank Zappa. Fixed to prefer an exact case-insensitive name match first, falling back to most-listeners only when no exact match exists.
+
 ## 2026-02-23 — Add year command to fm cog
 
 ### fm cog — year
